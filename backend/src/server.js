@@ -5,25 +5,42 @@ const dotenv = require('dotenv');
 const Groq = require("groq-sdk");
 
 const envPath = path.resolve(__dirname, '../.env');
-const envResult = dotenv.config({ path: envPath, quiet: true });
-
-if (envResult.error) {
-  console.warn(`[env] Could not load .env from ${envPath}: ${envResult.error.message}`);
-}
+dotenv.config({ path: envPath });
 
 const app = express();
+const PORT = process.env.PORT || 4000;
+
+function normalizeOrigin(origin) {
+  return origin?.replace(/\/+$/, '');
+}
+
 const allowedOrigins = [
   "http://localhost:3000",
   process.env.FRONTEND_URL
-].filter(Boolean);
+].filter(Boolean).map(normalizeOrigin);
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(normalizeOrigin(origin))) {
+        return callback(null, true);
+      }
+
+      console.warn(`[cors] blocked request from origin: ${origin}`);
+      return callback(null, false);
+    },
     credentials: true
   })
 );
 app.use(express.json());
+
+function logError(scope, err, extra = {}) {
+  console.error(scope, {
+    ...extra,
+    message: err.message,
+    stack: err.stack,
+  });
+}
 
 // ─── Groq API call ────────────────────────────────────────────────
 let groqClient;
@@ -263,7 +280,18 @@ Return only valid JSON.`;
   }
 }
 
-// ─── SSE Streaming Endpoint ─────────────────────────────────────────────────
+// Deployment and health endpoints
+app.get("/", (_, res) => {
+  res.json({
+    status: "running",
+    service: "Argos Investment Research Agent API",
+    version: "1.0.0"
+  });
+});
+
+app.get('/api/health', (_, res) => res.json({ ok: true }));
+
+// SSE Streaming Endpoint
 app.get('/api/analyze', async (req, res) => {
   const { company } = req.query;
   if (!company) return res.status(400).json({ error: 'company query param required' });
@@ -271,6 +299,8 @@ app.get('/api/analyze', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
 
   const send = (data) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -299,10 +329,10 @@ app.get('/api/analyze', async (req, res) => {
         ? 'Groq rejected the API key. Check GROQ_API_KEY in backend/.env.'
         : apiMessage || 'Analysis failed. Check the backend logs for details.';
 
-    console.error('[analyze] request failed', {
+    logError('[analyze] request failed', err, {
       status,
-      message: apiMessage || err.message,
-      response: responseData,
+      groqMessage: apiMessage,
+      groqErrorType: responseData?.error?.type,
     });
 
     send({ step: 'error', status: 'error', message });
@@ -311,7 +341,5 @@ app.get('/api/analyze', async (req, res) => {
   res.end();
 });
 
-app.get('/api/health', (_, res) => res.json({ ok: true }));
-
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Backend running on :${PORT}`));
+const server = app.listen(PORT, () => console.log(`Backend running on :${PORT}`));
+server.timeout = 120000;

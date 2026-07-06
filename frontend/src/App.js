@@ -4,6 +4,10 @@ import './App.css';
 // ── Constants ────────────────────────────────────────────────────────────────
 const EXAMPLES = ['Apple', 'Nvidia', 'Tesla', 'Microsoft', 'Amazon', 'Meta'];
 
+const API_URL =
+  process.env.REACT_APP_API_URL ||
+  "http://localhost:4000";
+
 const PIPELINE_STEPS = [
   { key: 'research',  name: 'Market Research',    icon: '🔍' },
   { key: 'sentiment', name: 'Sentiment Analysis', icon: '📊' },
@@ -132,7 +136,7 @@ function ResearchSection({ research }) {
   const {
     business_overview, financials = {}, valuation = {},
     competitive_position, growth_drivers = [], key_risks = [],
-    company_name, sector,
+    sector,
   } = research;
 
   const allMetrics = { ...financials, ...valuation };
@@ -364,7 +368,7 @@ export default function App() {
 
     try {
       const es = new EventSource(
-        `http://localhost:4000/api/analyze?company=${encodeURIComponent(company)}`
+        `${API_URL}/api/analyze?company=${encodeURIComponent(company)}`
       );
 
       es.onmessage = (e) => {
@@ -384,7 +388,7 @@ export default function App() {
       };
 
       es.onerror = () => {
-        setError('Connection lost. Make sure the backend is running on port 4000.');
+        setError(`Connection lost. Make sure the backend is reachable at ${API_URL}.`);
         setLoading(false);
         es.close();
       };
